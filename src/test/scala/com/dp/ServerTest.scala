@@ -17,8 +17,18 @@ class ServerTest extends FunSuite with Matchers with ScalatestRouteTest {
     val gameService = new GameService()
     val wsClient = WSProbe()
 
-    WS("/greeter", wsClient.flow) ~> gameService.websocketRoute ~> check {
+    WS("/", wsClient.flow) ~> gameService.websocketRoute ~> check {
       isWebSocketUpgrade shouldEqual true
+    }
+  }
+
+  test("should respond with correct message") {
+    val gameService = new GameService
+    val wsClient = WSProbe()
+
+    WS("/", wsClient.flow) ~> gameService.websocketRoute ~> check {
+      wsClient.sendMessage(TextMessage("hello"))
+      wsClient.expectMessage("hello")
     }
   }
 }
@@ -34,13 +44,7 @@ class GameService() extends Directives {
   }
 
   def greeter: Flow[Message, Message, Any] =
-    Flow[Message].mapConcat {
-      case tm: TextMessage  =>
-        TextMessage(Source.single("Hello ") ++
-          tm.textStream ++
-          Source.single("!")) :: Nil
-      case bm: BinaryMessage =>
-        bm.dataStream.runWith(Sink.ignore)
-        Nil
+    Flow[Message].collect {
+      case TextMessage.Strict(text) => TextMessage(text)
     }
 }
