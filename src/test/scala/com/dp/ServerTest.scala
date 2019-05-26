@@ -1,6 +1,6 @@
 package com.dp
 
-import akka.actor.ActorSystem
+import akka.actor.{Actor, ActorRef, ActorSystem}
 import akka.http.scaladsl.model.ws.{BinaryMessage, Message, TextMessage}
 import akka.stream.scaladsl.{Flow, GraphDSL, Merge, Sink, Source}
 import akka.http.scaladsl.server.Directives
@@ -45,6 +45,20 @@ class ServerTest extends FunSuite with Matchers with ScalatestRouteTest {
     })
   }
 
+  test("should register multiple players") {
+    val gameService = new GameService()
+    val johnClient = WSProbe()
+    val andrewClient = WSProbe()
+
+    WS(s"/?playerName=john", johnClient.flow) ~> gameService.websocketRoute ~> check {
+      johnClient.expectMessage("[{\"name\":\"john\"}")
+    }
+
+    WS(s"/?playerName=andrew", andrewClient.flow) ~> gameService.websocketRoute ~> check {
+      andrewClient.expectMessage("[{\"name\":\"john\"},{\"name\":\"andrew\"}]")
+    }
+  }
+
 }
 
 class GameService() extends Directives {
@@ -73,3 +87,27 @@ class GameService() extends Directives {
   }
 
 }
+
+class GameAreaActor extends Actor {
+
+  val players = collection.mutable.LinkedHashMap[String, PlayerWithActor]()
+
+  override def receive: Receive = {
+    case PlayerJoined(player, actor) => players += (player.name -> PlayerWithActor(player, actor))
+    case PlayerLeft(playerName) => players -= playerName
+    case PlayerMoveRequest(playerName, direction) =>
+  }
+
+  def notifyPlayersChanged: Unit = {
+    players.values.foreach(_.actor ! players.values.map(_.player))
+  }
+
+}
+
+trait GameEvent
+case class PlayerJoined(player: Player, actorRef: ActorRef) extends GameEvent
+case class PlayerLeft(player: String) extends GameEvent
+case class PlayerMoveRequest(player: String, direction: String) extends GameEvent
+case class Player(name: String)
+
+case class PlayerWithActor(player: Player, actor: ActorRef)
