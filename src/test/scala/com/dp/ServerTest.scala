@@ -133,7 +133,6 @@ class GameAreaActor extends Actor {
   def notifyPlayersChanged(): Unit = {
     players.values.foreach(_.actor ! PlayersChanged(players.values.map(_.player)))
   }
-
 }
 
 trait GameEvent
