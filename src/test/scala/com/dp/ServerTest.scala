@@ -82,7 +82,7 @@ class GameService() extends Directives {
       val materialization = builder.materializedValue.map(playerActor =>  PlayerJoined(Player(playerName), playerActor))
       val merge = builder.add(Merge[GameEvent](2))
 
-      val messagesToGameEventFlow = builder.add(Flow[Message].map{
+      val messagesToGameEventFlow = builder.add(Flow[Message].collect{
         case TextMessage.Strict(txt) => PlayerMoveRequest(playerName, txt)
       })
 
