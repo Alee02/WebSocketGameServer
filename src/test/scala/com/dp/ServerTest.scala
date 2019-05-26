@@ -1,11 +1,11 @@
 package com.dp
 
-import akka.actor.{Actor, ActorRef, ActorSystem}
+import akka.actor.{Actor, ActorRef, ActorSystem, Props}
 import akka.http.scaladsl.model.ws.{BinaryMessage, Message, TextMessage}
 import akka.stream.scaladsl.{Flow, GraphDSL, Merge, Sink, Source}
 import akka.http.scaladsl.server.Directives
 import akka.http.scaladsl.testkit.{ScalatestRouteTest, WSProbe}
-import akka.stream.{ActorMaterializer, FlowShape}
+import akka.stream.{ActorMaterializer, FlowShape, OverflowStrategy}
 import org.scalatest.{FunSuite, Matchers}
 
 class ServerTest extends FunSuite with Matchers with ScalatestRouteTest {
@@ -67,21 +67,43 @@ class GameService() extends Directives {
 
   implicit val actorMaterializer = ActorMaterializer()
 
+  val gameAreaActor = actorSystem.actorOf(Props(new GameAreaActor()))
+
   val websocketRoute = (get & parameter("playerName")){ playerName =>
     handleWebSocketMessages(flow(playerName))
   }
 
+  val playerActor = Source.actorRef[GameEvent](5, OverflowStrategy.fail)
+
   def flow(playerName: String): Flow[Message, Message, Any] = {
-    import GraphDSL.Implicits._
-    Flow.fromGraph(GraphDSL.create(){ implicit builder => {
-      val materialization = builder.materializedValue.map(_ => TextMessage(s"welcome $playerName"))
-      val messagePassingFlow = builder.add(Flow[Message].map(identity))
-      val merge = builder.add(Merge[Message](2))
+    Flow.fromGraph(GraphDSL.create(playerActor){ implicit builder => playerActor => {
+      import GraphDSL.Implicits._
 
-      materialization ~> merge.in(0)
-      merge ~> messagePassingFlow
+      val materialization = builder.materializedValue.map(playerActor =>  PlayerJoined(Player(playerName), playerActor))
+      val merge = builder.add(Merge[GameEvent](2))
 
-      FlowShape(merge.in(1), messagePassingFlow.out)
+      val messagesToGameEventFlow = builder.add(Flow[Message].map{
+        case TextMessage.Strict(txt) => PlayerMoveRequest(playerName, txt)
+      })
+
+      val gameEventsToMessageFlow = builder.add(Flow[GameEvent].map{
+        case PlayersChanged(players) => {
+          import spray.json._
+          import DefaultJsonProtocol._
+          implicit val playerFormat = jsonFormat1(Player)
+          TextMessage(players.toJson.toString)
+        }
+        case PlayerMoveRequest(player, direction) => TextMessage(direction)
+      })
+      // gameAreaActor will be a sink because once the flow has been completed, the PlayerLeft message will be emitted
+      val gameAreaActorSink = Sink.actorRef[GameEvent](gameAreaActor, PlayerLeft(playerName))
+
+      materialization ~> merge ~> gameAreaActorSink
+      messagesToGameEventFlow ~> merge
+
+      playerActor ~> gameEventsToMessageFlow
+
+      FlowShape(messagesToGameEventFlow.in, gameEventsToMessageFlow.out)
     }
     })
   }
@@ -93,13 +115,23 @@ class GameAreaActor extends Actor {
   val players = collection.mutable.LinkedHashMap[String, PlayerWithActor]()
 
   override def receive: Receive = {
-    case PlayerJoined(player, actor) => players += (player.name -> PlayerWithActor(player, actor))
-    case PlayerLeft(playerName) => players -= playerName
-    case PlayerMoveRequest(playerName, direction) =>
+    case PlayerJoined(player, actor) => {
+      players += (player.name -> PlayerWithActor(player, actor))
+      notifyPlayersChanged()
+    }
+    case PlayerLeft(playerName) => {
+      players -= playerName
+      notifyPlayersChanged()
+    }
+    case pmr@PlayerMoveRequest(playerName, direction) => notifyPlayerMoveRequested(pmr)
   }
 
-  def notifyPlayersChanged: Unit = {
-    players.values.foreach(_.actor ! players.values.map(_.player))
+  def notifyPlayerMoveRequested(playerMoveRequest: PlayerMoveRequest) = {
+    players.values.foreach(_.actor ! playerMoveRequest)
+  }
+
+  def notifyPlayersChanged(): Unit = {
+    players.values.foreach(_.actor ! PlayersChanged(players.values.map(_.player)))
   }
 
 }
@@ -108,6 +140,7 @@ trait GameEvent
 case class PlayerJoined(player: Player, actorRef: ActorRef) extends GameEvent
 case class PlayerLeft(player: String) extends GameEvent
 case class PlayerMoveRequest(player: String, direction: String) extends GameEvent
-case class Player(name: String)
+case class PlayersChanged(players: Iterable[Player]) extends GameEvent
 
+case class Player(name: String)
 case class PlayerWithActor(player: Player, actor: ActorRef)
