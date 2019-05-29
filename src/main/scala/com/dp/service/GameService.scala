@@ -7,11 +7,7 @@ import akka.stream.scaladsl.{Flow, GraphDSL, Merge, Sink, Source}
 import akka.stream.{ActorMaterializer, FlowShape, OverflowStrategy}
 import com.dp.actor._
 
-class GameService() extends Directives {
-
-  implicit val actorSystem = ActorSystem()
-
-  implicit val actorMaterializer = ActorMaterializer()
+class GameService(implicit val actorSystem: ActorSystem, implicit val actorMaterializer: ActorMaterializer) extends Directives {
 
   val gameAreaActor = actorSystem.actorOf(Props(new GameAreaActor()))
 
