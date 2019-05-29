@@ -52,6 +52,20 @@ class ServerTest extends FunSuite with Matchers with ScalatestRouteTest {
     }}
   }
 
+  test("should register player and move around") {
+    assertWebsocket("John") { wsClient => {
+      wsClient.expectMessage("""[{"name":"John","position":{"x":0,"y":0}}]""".stripMargin)
+      wsClient.sendMessage("up")
+      wsClient.expectMessage("""[{"name":"John","position":{"x":0,"y":1}}]""".stripMargin)
+      wsClient.sendMessage("left")
+      wsClient.expectMessage("""[{"name":"John","position":{"x":-1,"y":1}}]""".stripMargin)
+      wsClient.sendMessage("down")
+      wsClient.expectMessage("""[{"name":"John","position":{"x":-1,"y":0}}]""".stripMargin)
+      wsClient.sendMessage("right")
+      wsClient.expectMessage("""[{"name":"John","position":{"x":0,"y":0}}]""".stripMargin)
+    }}
+  }
+
   test("should register multiple players") {
     val gameService = new GameService()
     val johnClient = WSProbe()
@@ -135,7 +149,7 @@ class GameAreaActor extends Actor {
       val offset = direction match {
         case "up" => Position(0,1)
         case "down" => Position(0,-1)
-        case "right" => Position(1,1)
+        case "right" => Position(1,0)
         case "left" => Position(-1,0)
       }
       val oldPlayerWithActor = players(playerName)
