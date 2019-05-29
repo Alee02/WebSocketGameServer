@@ -24,34 +24,29 @@ class ServerTest extends FunSuite with Matchers with ScalatestRouteTest {
 
   test("should be able to connect to the GameService websocket") {
     assertWebsocket("John")(wsClient => {
-      wsClient.expectMessage("[{\"name\":\"John\"}]")
-      wsClient.sendMessage(TextMessage("hello"))
-      wsClient.expectMessage("hello")
+      wsClient.expectMessage("""[{"name":"John","position":{"x":0,"y":0}}]""".stripMargin)
+//      wsClient.sendMessage(TextMessage("hello"))
+//      wsClient.expectMessage("hello")
     })
   }
 
   test("should respond with correct message") {
     assertWebsocket("John")(wsClient => {
-      wsClient.expectMessage("[{\"name\":\"John\"}]")
-      wsClient.sendMessage(TextMessage("hello"))
-      wsClient.expectMessage("hello")
+      wsClient.expectMessage("""[{"name":"John","position":{"x":0,"y":0}}]""".stripMargin)
+//      wsClient.sendMessage(TextMessage("hello"))
+//      wsClient.expectMessage("hello")
     })
   }
 
   test("should register player") {
     assertWebsocket("John")(wsClient => {
-      wsClient.expectMessage("[{\"name\":\"John\"}]")
+      wsClient.expectMessage("""[{"name":"John","position":{"x":0,"y":0}}]""".stripMargin)
     })
   }
 
   test("should register player and move it up") {
     assertWebsocket("John") { wsClient => {
-      wsClient.expectMessage(
-      """{
-          "name": "John",
-          "position": {"x": 0, "y":0}
-          }
-      """.stripMargin)
+      wsClient.expectMessage("""[{"name":"John","position":{"x":0,"y":0}}]""".stripMargin)
     }}
   }
 
@@ -60,15 +55,16 @@ class ServerTest extends FunSuite with Matchers with ScalatestRouteTest {
     val johnClient = WSProbe()
     val andrewClient = WSProbe()
 
-    WS(s"/?playerName=john", johnClient.flow) ~> gameService.websocketRoute ~> check {
-      johnClient.expectMessage("[{\"name\":\"john\"}]")
+    WS(s"/?playerName=John", johnClient.flow) ~> gameService.websocketRoute ~> check {
+      johnClient.expectMessage("""[{"name":"John","position":{"x":0,"y":0}}]""".stripMargin)
     }
 
-    WS(s"/?playerName=andrew", andrewClient.flow) ~> gameService.websocketRoute ~> check {
-      andrewClient.expectMessage("[{\"name\":\"john\"},{\"name\":\"andrew\"}]")
+    WS(s"/?playerName=Andrew", andrewClient.flow) ~> gameService.websocketRoute ~> check {
+      andrewClient.expectMessage("""[{"name":"John","position":{"x":0,"y":0}},{"name":"Andrew","position":{"x":0,"y":0}}]""".stripMargin)
     }
+
+
   }
-
 }
 
 class GameService() extends Directives {
@@ -89,7 +85,7 @@ class GameService() extends Directives {
     Flow.fromGraph(GraphDSL.create(playerActor){ implicit builder => playerActor => {
       import GraphDSL.Implicits._
 
-      val materialization = builder.materializedValue.map(playerActor =>  PlayerJoined(Player(playerName), playerActor))
+      val materialization = builder.materializedValue.map(playerActor =>  PlayerJoined(Player(playerName, Position(0,0)), playerActor))
       val merge = builder.add(Merge[GameEvent](2))
 
       val messagesToGameEventFlow = builder.add(Flow[Message].collect{
@@ -100,9 +96,10 @@ class GameService() extends Directives {
         case PlayersChanged(players) =>
           import spray.json._
           import DefaultJsonProtocol._
-          implicit val playerFormat = jsonFormat1(Player)
+          import DefaultJsonProtocol._
+          implicit val positionFormat: RootJsonFormat[Position] = jsonFormat2(Position)
+          implicit val playerFormat: RootJsonFormat[Player] = jsonFormat2(Player)
           TextMessage(players.toJson.toString)
-        case PlayerMoveRequest(player, direction) => TextMessage(direction)
       })
       // gameAreaActor will be a sink because once the flow has been completed, the PlayerLeft message will be emitted
       val gameAreaActorSink = Sink.actorRef[GameEvent](gameAreaActor, PlayerLeft(playerName))
@@ -134,22 +131,18 @@ class GameAreaActor extends Actor {
     }
     case pmr@PlayerMoveRequest(playerName, direction) => {
       val offset = direction match {
-        case "up" => Postition(0,1)
-        case "down" => Postition(0,-1)
-        case "right" => Postition(1,1)
-        case "left" => Postition(-1,0)
+        case "up" => Position(0,1)
+        case "down" => Position(0,-1)
+        case "right" => Position(1,1)
+        case "left" => Position(-1,0)
       }
       val oldPlayerWithActor = players(playerName)
       val oldPlayer = oldPlayerWithActor.player
-      val actor = oldPlayerWithActor.player
-      notifyPlayerMoveRequested(pmr)
+      val actor = oldPlayerWithActor.actor
+      players(playerName) = PlayerWithActor(Player(playerName, oldPlayer.position + offset), actor)
+      notifyPlayersChanged()
     }
   }
-
-  def notifyPlayerMoveRequested(playerMoveRequest: PlayerMoveRequest) = {
-    players.values.foreach(_.actor ! playerMoveRequest)
-  }
-
   def notifyPlayersChanged(): Unit = {
     players.values.foreach(_.actor ! PlayersChanged(players.values.map(_.player)))
   }
@@ -161,7 +154,11 @@ case class PlayerLeft(player: String) extends GameEvent
 case class PlayerMoveRequest(player: String, direction: String) extends GameEvent
 case class PlayersChanged(players: Iterable[Player]) extends GameEvent
 
-case class Player(name: String)
+case class Player(name: String, position: Position)
 case class PlayerWithActor(player: Player, actor: ActorRef)
 
-case class Postition(x: Int, y: Int)
+case class Position(x: Int, y: Int) {
+  def + (other: Position) = {
+    Position(x+other.x, y+other.y)
+  }
+}
