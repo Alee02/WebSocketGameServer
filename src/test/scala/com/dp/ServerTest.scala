@@ -44,6 +44,17 @@ class ServerTest extends FunSuite with Matchers with ScalatestRouteTest {
     })
   }
 
+  test("should register player and move it up") {
+    assertWebsocket("John") { wsClient => {
+      wsClient.expectMessage(
+      """{
+          "name": "John",
+          "position": {"x": 0, "y":0}
+          }
+      """.stripMargin)
+    }}
+  }
+
   test("should register multiple players") {
     val gameService = new GameService()
     val johnClient = WSProbe()
@@ -86,12 +97,11 @@ class GameService() extends Directives {
       })
 
       val gameEventsToMessageFlow = builder.add(Flow[GameEvent].map{
-        case PlayersChanged(players) => {
+        case PlayersChanged(players) =>
           import spray.json._
           import DefaultJsonProtocol._
           implicit val playerFormat = jsonFormat1(Player)
           TextMessage(players.toJson.toString)
-        }
         case PlayerMoveRequest(player, direction) => TextMessage(direction)
       })
       // gameAreaActor will be a sink because once the flow has been completed, the PlayerLeft message will be emitted
@@ -122,7 +132,18 @@ class GameAreaActor extends Actor {
       players -= playerName
       notifyPlayersChanged()
     }
-    case pmr@PlayerMoveRequest(playerName, direction) => notifyPlayerMoveRequested(pmr)
+    case pmr@PlayerMoveRequest(playerName, direction) => {
+      val offset = direction match {
+        case "up" => Postition(0,1)
+        case "down" => Postition(0,-1)
+        case "right" => Postition(1,1)
+        case "left" => Postition(-1,0)
+      }
+      val oldPlayerWithActor = players(playerName)
+      val oldPlayer = oldPlayerWithActor.player
+      val actor = oldPlayerWithActor.player
+      notifyPlayerMoveRequested(pmr)
+    }
   }
 
   def notifyPlayerMoveRequested(playerMoveRequest: PlayerMoveRequest) = {
@@ -142,3 +163,5 @@ case class PlayersChanged(players: Iterable[Player]) extends GameEvent
 
 case class Player(name: String)
 case class PlayerWithActor(player: Player, actor: ActorRef)
+
+case class Postition(x: Int, y: Int)
