@@ -47,6 +47,8 @@ class ServerTest extends FunSuite with Matchers with ScalatestRouteTest {
   test("should register player and move it up") {
     assertWebsocket("John") { wsClient => {
       wsClient.expectMessage("""[{"name":"John","position":{"x":0,"y":0}}]""".stripMargin)
+      wsClient.sendMessage("up")
+      wsClient.expectMessage("""[{"name":"John","position":{"x":0,"y":1}}]""".stripMargin)
     }}
   }
 
